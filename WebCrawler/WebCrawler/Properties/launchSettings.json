@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "WebCrawler": {
+      "commandName": "Project",
+      "commandLineArgs": "input_files/URL-input-100.txt",
+      "workingDirectory": "C:\\Users\\kkuriachan\\OneDrive - Microsoft\\Documents\\Learning\\Multithreading\\Workshop\\Code"
+    }
+  }
+}
