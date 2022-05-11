@@ -26,7 +26,7 @@ namespace WebCrawler.WebCrawler
             _filename = filename;
         }
 
-        public async Task<WebCrawlResult> CrawlAsync()
+        public async Task<WebCrawlResult> CrawlAsync(int? maxSites = null)
         {
             Stopwatch stopwatch = Stopwatch.StartNew();
             if (File.Exists(_filename))
@@ -37,6 +37,12 @@ namespace WebCrawler.WebCrawler
 
                 foreach (string line in lines)
                 {
+                    if (maxSites != null && _totalSites >= maxSites)
+                    {
+                        Console.WriteLine($"Reader: reached max lines to read of {maxSites}");
+                        break;
+                    }
+
                     _totalSites++;
                     if (_uniqueUrls.Contains(line))
                     {

@@ -16,13 +16,19 @@ namespace WebCrawler
     {
         public static async Task Main(string[] args)
         {
-            if (args.Length != 1)
+            if (args.Length != 3)
             {
-                Console.WriteLine("Missing filename argument");
+                Console.WriteLine("Usage: WebCrawler.exe filename maxLines concurrencyMode");
                 return;
             }
 
             string filename = args[0];
+
+            if (!int.TryParse(args[1], out int maxLines))
+            {
+                Console.WriteLine("Max lines is not a valid integer");
+                return;
+            }
 
             Console.WriteLine($"Input filename: {filename}");
 
@@ -35,9 +41,15 @@ namespace WebCrawler
             Console.WriteLine("Reading file and crawling urls");
 
             IWebCrawler webCrawler;
-            RunType runType = RunType.InterlockedAwaitAll;
+            if (!Enum.TryParse<RunType>(args[2], true, out RunType runType))
+            {
+                Console.WriteLine("Incorrect concurrency mode");
+                return;
+            }
 
-            switch(runType)
+            Console.WriteLine($"Run type: {runType.ToString()}");
+
+            switch (runType)
             {
                 case RunType.SingleThreaded:
                     webCrawler = new WebCrawlerSingleThreaded(filename);
@@ -59,9 +71,11 @@ namespace WebCrawler
 
             //IWebCrawler webCrawler = new WebCrawlerInterlockedAwaitAll(filename);
 
-            WebCrawlResult result = await webCrawler.CrawlAsync();
+            WebCrawlResult result = await webCrawler.CrawlAsync(maxLines);
 
             result.PrintResult();
+
+            Console.ReadKey();
         }
     }
 }

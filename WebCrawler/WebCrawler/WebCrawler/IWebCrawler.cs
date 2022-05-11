@@ -8,6 +8,6 @@ namespace WebCrawler.WebCrawler
 {
     public interface IWebCrawler
     {
-        public Task<WebCrawlResult> CrawlAsync();
+        public Task<WebCrawlResult> CrawlAsync(int? maxSites = null);
     }
 }

@@ -158,7 +158,7 @@ namespace WebCrawler.WebCrawler
                 };
             }
         }
-        public async Task<WebCrawlResult> CrawlAsync()
+        public async Task<WebCrawlResult> CrawlAsync(int? maxSites = null)
         {
             List<Task<SingleUrlResult>> tasks = new List<Task<SingleUrlResult>>();
 
@@ -166,12 +166,19 @@ namespace WebCrawler.WebCrawler
 
             if (File.Exists(_filename))
             {
-                using (StreamReader openFile = new System.IO.StreamReader(_filename))
+                using (StreamReader openFile = File.OpenText(_filename))
                 {
                     string line = string.Empty;
+                    int totalLines = 0;
                     while ((line = openFile.ReadLine()) != null)
                     {
+                        totalLines++;
                         tasks.Add(CheckUrlAsync(line));
+                        if (maxSites != null && totalLines >= maxSites)
+                        {
+                            Console.WriteLine($"Reader: reached max lines to read of {maxSites}");
+                            break;
+                        }
                     }
 
                     SingleUrlResult[] results = await Task.WhenAll(tasks);

@@ -21,6 +21,8 @@ namespace WebCrawler.WebCrawler
 
         private long _totalUnfoundHosts = 0;
 
+        private Stopwatch _stopwatch = new Stopwatch();
+
         private readonly object _mutexUrls = new object();
         private readonly object _mutexIps = new object();
 
@@ -43,6 +45,8 @@ namespace WebCrawler.WebCrawler
                     return;
                 }
             }
+
+            TimeSpan prevTime = _stopwatch.Elapsed;
 
             try
             {
@@ -79,7 +83,15 @@ namespace WebCrawler.WebCrawler
                 // a new unique ip was found 
                 if (newUniqueIps != prevUniqueIps)
                 {
-                    Interlocked.Increment(ref _totalUniqueSites);
+                    long currUnique = Interlocked.Increment(ref _totalUniqueSites);
+
+                    if (currUnique % 1000 == 0)
+                    {
+                        TimeSpan currTime = _stopwatch.Elapsed;
+                        Console.WriteLine($"Worker: Downloaded from {currUnique} sites -- Time: {currTime} -- Time Since Last Worker Print: {(currTime - prevTime).ToString()}");
+                        prevTime = currTime;
+                    }
+
                     byte[] result = await client.DownloadDataTaskAsync(new Uri(url));
                     Interlocked.Add(ref _totalBytesDownloaded, result.LongLength);
                     Interlocked.Increment(ref _totalResonsiveSites);
@@ -102,23 +114,36 @@ namespace WebCrawler.WebCrawler
                 return;
             }
         }
-        public async Task<WebCrawlResult> CrawlAsync()
+        public async Task<WebCrawlResult> CrawlAsync(int? maxSites = null)
         {
             List<Task> tasks = new List<Task>();
 
-            Stopwatch stopwatch = Stopwatch.StartNew();
+            _stopwatch.Start();
 
             if (File.Exists(_filename))
             {
-                using (StreamReader openFile = new System.IO.StreamReader(_filename))
+                using (StreamReader sr = File.OpenText(_filename))
                 {
-                    string line = string.Empty;
-                    while ((line = openFile.ReadLine()) != null)
+                    string line = String.Empty;
+                    TimeSpan prevTime = _stopwatch.Elapsed;
+                    while ((line = sr.ReadLine()) != null)
                     {
                         _totalSites++;
+                        if (_totalSites % 1000 == 0)
+                        {
+                            TimeSpan timeNow = _stopwatch.Elapsed;
+                            Console.WriteLine($"Reader: Read {_totalSites} lines -- Time: {timeNow.ToString()} -- Time Since Last Reader print: {(timeNow - prevTime).ToString()}");
+                            prevTime = timeNow;
+                        }
                         tasks.Add(CheckUrlAsync(line));
+                        if (maxSites != null && _totalSites >= maxSites)
+                        {
+                            Console.WriteLine($"Reader: reached max lines to read of {maxSites}");
+                            break;
+                        }
                     }
 
+                    Console.WriteLine("Waiting for tasks to finish");
                     await Task.WhenAll(tasks);
                 }
             }
@@ -127,7 +152,7 @@ namespace WebCrawler.WebCrawler
                 throw new ArgumentException("File does not exist");
             }
 
-            stopwatch.Stop();
+            _stopwatch.Stop();
 
             return new WebCrawlResult
             {
@@ -136,7 +161,7 @@ namespace WebCrawler.WebCrawler
                 TotalUnfound = _totalUnfoundHosts,
                 TotalResponsiveSites = _totalResonsiveSites,
                 TotalBytesDownloaded = _totalBytesDownloaded,
-                TotalTime = stopwatch.Elapsed
+                TotalTime = _stopwatch.Elapsed
             };
         }
     }

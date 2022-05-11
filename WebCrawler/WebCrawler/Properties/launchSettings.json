@@ -3,7 +3,12 @@
     "WebCrawler": {
       "commandName": "Project",
       "commandLineArgs": "input_files/URL-input-100.txt",
-      "workingDirectory": "C:\\Users\\kkuriachan\\OneDrive - Microsoft\\Documents\\Learning\\Multithreading\\Workshop\\Code"
+      "workingDirectory": "C:\\Users\\concurrencydemo\\Desktop\\ConcurrencyInDotNet"
+    },
+    "WebCrawler1M": {
+      "commandName": "Project",
+      "commandLineArgs": "input_files/URL-input-1M-2019.txt 100 InterlockedAwaitAll",
+      "workingDirectory": "C:\\Users\\concurrencydemo\\Desktop\\ConcurrencyInDotNet"
     }
   }
 }
