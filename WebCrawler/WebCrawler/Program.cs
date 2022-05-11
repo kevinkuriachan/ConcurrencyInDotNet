@@ -10,15 +10,16 @@ namespace WebCrawler
     {
         SingleThreaded,
         AwaitAll,
-        InterlockedAwaitAll
+        InterlockedAwaitAll,
+        PC
     }
     internal class Program
     {
         public static async Task Main(string[] args)
         {
-            if (args.Length != 3)
+            if (args.Length != 3 || args.Length != 4)
             {
-                Console.WriteLine("Usage: WebCrawler.exe filename maxLines concurrencyMode");
+                Console.WriteLine("Usage: WebCrawler.exe filename maxLines concurrencyMode [numThreads]");
                 return;
             }
 
@@ -59,6 +60,18 @@ namespace WebCrawler
                     break;
                 case RunType.InterlockedAwaitAll:
                     webCrawler = new WebCrawlerInterlockedAwaitAll(filename);
+                    break;
+                case RunType.PC:
+                    if (args.Length != 4)
+                    {
+                        Console.WriteLine($"numThreads required when using mode {runType}");
+                    }
+                    if (!int.TryParse(args[3], out int numThreads))
+                    {
+                        Console.WriteLine("numThreads is not a valid integer");
+                        return;
+                    }
+                    webCrawler = new WebCrawlerPC(filename, numThreads);
                     break;
                 default:
                     webCrawler = new WebCrawlerSingleThreaded(filename);
