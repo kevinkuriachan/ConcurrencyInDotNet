@@ -7,7 +7,7 @@
     },
     "WebCrawler1M": {
       "commandName": "Project",
-      "commandLineArgs": "input_files/URL-input-1M-2019.txt 100 InterlockedAwaitAll",
+      "commandLineArgs": "input_files/URL-input-1M-2019.txt 10000 pc 600",
       "workingDirectory": "C:\\Users\\concurrencydemo\\Desktop\\ConcurrencyInDotNet"
     }
   }

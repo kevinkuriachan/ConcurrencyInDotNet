@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
@@ -37,6 +38,12 @@ namespace WebCrawler.WebCrawler
         private long _totalBytesDownloaded = 0;
 
         private long _totalUnfoundHosts = 0;
+        private long _unsuccessful = 0;
+
+        private long _totalPopped = 0;
+        private long _totalComplete = 0;
+        private long _threadsRunning = 0;
+        private long _threadsWaiting = 0;
 
         public WebCrawlerPC(string filename, int threads)
         {
@@ -50,8 +57,12 @@ namespace WebCrawler.WebCrawler
         {
             while (true)
             {
-                await Task.Delay(2000);
-                Console.WriteLine($"Stats: Waiting {0} -- Running {0} -- Queued {_urlsQueue.Count} -- Elapsed {_stopwatch.Elapsed.ToString()} -- Popped {0} -- Complete {0} -- Responses {_totalResonsiveSites} -- Bytes {_totalBytesDownloaded}");
+                if (_quitEvent.Wait(2000))
+                {
+                    return;
+                }
+                //await Task.Delay(2000);
+                Console.WriteLine($"Stats: Waiting {_threadsWaiting} -- Running {_threadsRunning} -- Queued {_urlsQueue.Count} -- Elapsed {_stopwatch.Elapsed.ToString()} -- Popped {_totalPopped} -- Complete {_totalComplete} -- Responses {_totalResonsiveSites} -- Bytes {_totalBytesDownloaded}");
             }
         }
 
@@ -62,14 +73,16 @@ namespace WebCrawler.WebCrawler
             bool producerDone = false;
 
             WebClient client = new WebClient();
+            HttpClient httpClient = new HttpClient();
 
             while (true)
             {
-                int signal = await Task.Run(() => WaitHandle.WaitAny(waits));
+                Interlocked.Increment(ref _threadsWaiting);
+                int signal = WaitHandle.WaitAny(waits);
                 if (signal == 0)
                 {
                     // quit 
-                    break;
+                    return;
                 }
 
                 if (signal == 1)
@@ -79,12 +92,13 @@ namespace WebCrawler.WebCrawler
 
                 if (producerDone && _urlsQueue.IsEmpty)
                 {
-                    // quit
-                    _quitEvent.Set();
-                    break;
+                    // no more work, quit
+                    return;
                 }
 
                 await _fullSema.WaitAsync();
+                Interlocked.Increment(ref _threadsRunning);
+                Interlocked.Decrement(ref _threadsWaiting);
 
                 // aquired the _fullSema 
                 // pop from queue and do work
@@ -96,7 +110,17 @@ namespace WebCrawler.WebCrawler
                 // spot opened up in the queue 
                 _emptySema.Release();
 
-                await CheckUrlAsync(url, client);
+                Interlocked.Increment(ref _totalPopped);
+
+                await CheckUrlAsync(url, client, httpClient);
+
+                Interlocked.Increment(ref _totalComplete);
+                long threadsRemaining = Interlocked.Decrement(ref _threadsRunning);
+
+                if (_proucerDoneEvent.IsSet && _urlsQueue.IsEmpty && threadsRemaining == 0)
+                {
+                    _quitEvent.Set();
+                }
 
             }
         }
@@ -111,7 +135,8 @@ namespace WebCrawler.WebCrawler
             }
 
             // start worker threads 
-            Task[] threads = new Task[_numThreads];
+            Task[] threads = new Task[_numThreads+1];
+            threads[_numThreads] = Task.Run(() => StatsThread());
             for (int i = 0; i < _numThreads; i++)
             {
                 threads[i] = Task.Run(() => WorkerThread());
@@ -124,13 +149,6 @@ namespace WebCrawler.WebCrawler
                 while ((line = sr.ReadLine()) != null)
                 {
                     _totalSites++;
-                    if (_totalSites % 1000 == 0)
-                    {
-                        TimeSpan timeNow = _stopwatch.Elapsed;
-                        Console.WriteLine($"Reader: Read {_totalSites} lines -- Time: {timeNow.ToString()} -- Time Since Last Reader print: {(timeNow - prevTime).ToString()}");
-                        prevTime = timeNow;
-                    }
-
 
                     await _emptySema.WaitAsync();
                     _urlsQueue.Enqueue(line);
@@ -145,11 +163,9 @@ namespace WebCrawler.WebCrawler
                 }
 
                 _proucerDoneEvent.Set();
+                Console.WriteLine("Waiting for tasks to finish");
 
                 await Task.WhenAll(threads);
-
-                Console.WriteLine("Waiting for tasks to finish");
-                    
             }
 
 
@@ -166,9 +182,10 @@ namespace WebCrawler.WebCrawler
             };
         }
 
-        private async Task CheckUrlAsync(string url, WebClient? clientToUse = null)
+        private async Task CheckUrlAsync(string url, WebClient? clientToUse = null, HttpClient? httpClientToUse = null)
         {
             WebClient client = clientToUse ?? new WebClient();
+            HttpClient httpClient = httpClientToUse ?? new HttpClient();
 
             if (_uniqueUrls.ContainsKey(url))
             {
@@ -215,11 +232,12 @@ namespace WebCrawler.WebCrawler
                 {
                     long currUnique = Interlocked.Increment(ref _totalUniqueSites);
 
-                    if (currUnique % 1000 == 0)
+                    HttpResponseMessage checkReply = await httpClient.GetAsync(url);
+
+                    if (!checkReply.IsSuccessStatusCode)
                     {
-                        TimeSpan currTime = _stopwatch.Elapsed;
-                        Console.WriteLine($"Worker: Downloaded from {currUnique} sites -- Time: {currTime} -- Time Since Last Worker Print: {(currTime - prevTime).ToString()}");
-                        prevTime = currTime;
+                        Interlocked.Increment(ref _unsuccessful);
+                        return;
                     }
 
                     byte[] result = await client.DownloadDataTaskAsync(new Uri(url));

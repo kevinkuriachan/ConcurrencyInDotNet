@@ -17,7 +17,7 @@ namespace WebCrawler
     {
         public static async Task Main(string[] args)
         {
-            if (args.Length != 3 || args.Length != 4)
+            if (args.Length != 3 && args.Length != 4)
             {
                 Console.WriteLine("Usage: WebCrawler.exe filename maxLines concurrencyMode [numThreads]");
                 return;
