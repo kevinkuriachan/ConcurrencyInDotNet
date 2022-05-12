@@ -17,7 +17,7 @@ namespace WebCrawler.WebCrawler
         private int _numThreads = 0;
 
         private SemaphoreSlim _emptySema;
-        private SemaphoreSlim _fullSema = new SemaphoreSlim(0);
+        private SemaphoreSlim _fullSema;
 
         private ManualResetEventSlim _quitEvent = new ManualResetEventSlim();
         private ManualResetEventSlim _proucerDoneEvent = new ManualResetEventSlim();
@@ -41,8 +41,18 @@ namespace WebCrawler.WebCrawler
         public WebCrawlerPC(string filename, int threads)
         {
             this._numThreads = threads;
-            this._emptySema = new SemaphoreSlim(threads);
+            this._emptySema = new SemaphoreSlim(threads, threads);
+            this._fullSema = _fullSema = new SemaphoreSlim(0, threads);
             this._filename = filename;
+        }
+
+        private async Task StatsThread()
+        {
+            while (true)
+            {
+                await Task.Delay(2000);
+                Console.WriteLine($"Stats: Waiting {0} -- Running {0} -- Queued {_urlsQueue.Count} -- Elapsed {_stopwatch.Elapsed.ToString()} -- Popped {0} -- Complete {0} -- Responses {_totalResonsiveSites} -- Bytes {_totalBytesDownloaded}");
+            }
         }
 
         private async Task WorkerThread()
@@ -50,6 +60,8 @@ namespace WebCrawler.WebCrawler
             WaitHandle[] waits = { _quitEvent.WaitHandle, _proucerDoneEvent.WaitHandle, _fullSema.AvailableWaitHandle };
 
             bool producerDone = false;
+
+            WebClient client = new WebClient();
 
             while (true)
             {
@@ -72,6 +84,8 @@ namespace WebCrawler.WebCrawler
                     break;
                 }
 
+                await _fullSema.WaitAsync();
+
                 // aquired the _fullSema 
                 // pop from queue and do work
 
@@ -82,7 +96,7 @@ namespace WebCrawler.WebCrawler
                 // spot opened up in the queue 
                 _emptySema.Release();
 
-                await CheckUrlAsync(url);
+                await CheckUrlAsync(url, client);
 
             }
         }
@@ -143,18 +157,18 @@ namespace WebCrawler.WebCrawler
 
             return new WebCrawlResult
             {
-                //TotalSites = _totalSites,
-                //TotalUniqueSites = _totalUniqueSites,
-                //TotalUnfound = _totalUnfoundHosts,
-                //TotalResponsiveSites = _totalResonsiveSites,
-                //TotalBytesDownloaded = _totalBytesDownloaded,
+                TotalSites = _totalSites,
+                TotalUniqueSites = _totalUniqueSites,
+                TotalUnfound = _totalUnfoundHosts,
+                TotalResponsiveSites = _totalResonsiveSites,
+                TotalBytesDownloaded = _totalBytesDownloaded,
                 TotalTime = _stopwatch.Elapsed
             };
         }
 
-        private async Task CheckUrlAsync(string url)
+        private async Task CheckUrlAsync(string url, WebClient? clientToUse = null)
         {
-            WebClient client = new WebClient();
+            WebClient client = clientToUse ?? new WebClient();
 
             if (_uniqueUrls.ContainsKey(url))
             {
