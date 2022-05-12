@@ -45,6 +45,12 @@ namespace WebCrawler.WebCrawler
         private long _threadsRunning = 0;
         private long _threadsWaiting = 0;
 
+        private long _downloads = 0;
+
+        private long _maxBytesFromPage = 5000;
+
+        private long _remainingThreads = 0;
+
         public WebCrawlerPC(string filename, int threads)
         {
             this._numThreads = threads;
@@ -62,7 +68,7 @@ namespace WebCrawler.WebCrawler
                     return;
                 }
                 //await Task.Delay(2000);
-                Console.WriteLine($"Stats: Waiting {_threadsWaiting} -- Running {_threadsRunning} -- Queued {_urlsQueue.Count} -- Elapsed {_stopwatch.Elapsed.ToString()} -- Popped {_totalPopped} -- Complete {_totalComplete} -- Responses {_totalResonsiveSites} -- Bytes {_totalBytesDownloaded}");
+                Console.WriteLine($"Stats: Waiting {_threadsWaiting} -- Running {_threadsRunning} -- Queued {_urlsQueue.Count} -- Elapsed {_stopwatch.Elapsed.ToString()} -- Popped {_totalPopped} -- Complete {_totalComplete} -- Downloads {_downloads} -- Responses {_totalResonsiveSites} -- Bytes {_totalBytesDownloaded}");
             }
         }
 
@@ -75,6 +81,8 @@ namespace WebCrawler.WebCrawler
             WebClient client = new WebClient();
             HttpClient httpClient = new HttpClient();
 
+            Interlocked.Increment(ref _remainingThreads);
+
             while (true)
             {
                 Interlocked.Increment(ref _threadsWaiting);
@@ -82,6 +90,8 @@ namespace WebCrawler.WebCrawler
                 if (signal == 0)
                 {
                     // quit 
+                    Interlocked.Decrement(ref _threadsWaiting);
+                    Interlocked.Decrement(ref _remainingThreads);
                     return;
                 }
 
@@ -93,6 +103,8 @@ namespace WebCrawler.WebCrawler
                 if (producerDone && _urlsQueue.IsEmpty)
                 {
                     // no more work, quit
+                    Interlocked.Decrement(ref _threadsWaiting);
+                    Interlocked.Decrement(ref _remainingThreads);
                     return;
                 }
 
@@ -105,6 +117,7 @@ namespace WebCrawler.WebCrawler
 
                 if (!_urlsQueue.TryDequeue(out string url))
                 {
+                    Interlocked.Decrement(ref _remainingThreads);
                     throw new Exception("unable to dequeue from queue");
                 }
                 // spot opened up in the queue 
@@ -115,11 +128,17 @@ namespace WebCrawler.WebCrawler
                 await CheckUrlAsync(url, client, httpClient);
 
                 Interlocked.Increment(ref _totalComplete);
-                long threadsRemaining = Interlocked.Decrement(ref _threadsRunning);
+                Interlocked.Decrement(ref _threadsRunning);
 
-                if (_proucerDoneEvent.IsSet && _urlsQueue.IsEmpty && threadsRemaining == 0)
+
+                if (_proucerDoneEvent.IsSet && _urlsQueue.IsEmpty)
                 {
-                    _quitEvent.Set();
+                    long threadsRemaining = Interlocked.Decrement(ref _remainingThreads);
+
+                    if (threadsRemaining == 0)
+                    {
+                        _quitEvent.Set();
+                    }
                 }
 
             }
@@ -232,7 +251,11 @@ namespace WebCrawler.WebCrawler
                 {
                     long currUnique = Interlocked.Increment(ref _totalUniqueSites);
 
-                    HttpResponseMessage checkReply = await httpClient.GetAsync(url);
+                    HttpRequestMessage headReq = new HttpRequestMessage();
+                    headReq.Method = HttpMethod.Head;
+                    headReq.RequestUri = uri;
+
+                    HttpResponseMessage checkReply = await httpClient.SendAsync(headReq, HttpCompletionOption.ResponseHeadersRead);
 
                     if (!checkReply.IsSuccessStatusCode)
                     {
@@ -240,9 +263,18 @@ namespace WebCrawler.WebCrawler
                         return;
                     }
 
-                    byte[] result = await client.DownloadDataTaskAsync(new Uri(url));
-                    Interlocked.Add(ref _totalBytesDownloaded, result.LongLength);
                     Interlocked.Increment(ref _totalResonsiveSites);
+
+                    if (checkReply.Content.Headers.ContentLength > _maxBytesFromPage)
+                    {
+                        Interlocked.Increment(ref _unsuccessful);
+                        return;
+                    }
+
+                    byte[] result = await httpClient.GetByteArrayAsync(url);
+                    Interlocked.Add(ref _totalBytesDownloaded, result.LongLength);
+                    
+                    Interlocked.Increment(ref _downloads);
                     //_totalUniqueSites++;
                     //_totalBytesDownloaded += result.LongLength;
                     return;

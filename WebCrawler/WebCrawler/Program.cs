@@ -11,7 +11,8 @@ namespace WebCrawler
         SingleThreaded,
         AwaitAll,
         InterlockedAwaitAll,
-        PC
+        PC,
+        Channel
     }
     internal class Program
     {
@@ -73,16 +74,23 @@ namespace WebCrawler
                     }
                     webCrawler = new WebCrawlerPC(filename, numThreads);
                     break;
+                case RunType.Channel:
+                    if (args.Length != 4)
+                    {
+                        Console.WriteLine($"numThreads required when using mode {runType}");
+                    }
+                    if (!int.TryParse(args[3], out numThreads))
+                    {
+                        Console.WriteLine("numThreads is not a valid integer");
+                        return;
+                    }
+                    webCrawler = new WebCrawlerChannel(filename, numThreads);
+                    break;
                 default:
                     webCrawler = new WebCrawlerSingleThreaded(filename);
                     break;
             }
 
-            //IWebCrawler webCrawler = new WebCrawlerSingleThreaded(filename);
-
-            //IWebCrawler webCrawler = new WebCrawlerAwaitAll(filename);
-
-            //IWebCrawler webCrawler = new WebCrawlerInterlockedAwaitAll(filename);
 
             WebCrawlResult result = await webCrawler.CrawlAsync(maxLines);
 

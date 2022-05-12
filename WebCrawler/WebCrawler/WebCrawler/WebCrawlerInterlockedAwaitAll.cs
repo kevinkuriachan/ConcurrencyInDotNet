@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
@@ -21,10 +22,22 @@ namespace WebCrawler.WebCrawler
 
         private long _totalUnfoundHosts = 0;
 
+        private long _maxBytesFromPage = 5000;
+        private long _downloads = 0;
+
+        private long _totalPopped = 0;
+        private long _totalComplete = 0;
+        private long _threadsRunning = 0;
+        private long _threadsWaiting = 0;
+
+        private long _unsuccessful = 0;
+
         private Stopwatch _stopwatch = new Stopwatch();
 
         private readonly object _mutexUrls = new object();
         private readonly object _mutexIps = new object();
+
+        private ManualResetEventSlim _quitEvent = new ManualResetEventSlim();
 
         private HashSet<string> _uniqueUrls = new HashSet<string>();
         private HashSet<IPAddress> _uniqueIps = new HashSet<IPAddress>();
@@ -36,12 +49,16 @@ namespace WebCrawler.WebCrawler
 
         private async Task CheckUrlAsync(string url)
         {
-            WebClient client = new WebClient();
+            HttpClient httpClient = new HttpClient();
+
+            Interlocked.Increment(ref _threadsRunning);
 
             lock(_mutexUrls)
             {
                 if (_uniqueUrls.Contains(url))
                 {
+                    Interlocked.Decrement(ref _threadsRunning);
+                    Interlocked.Increment(ref _totalComplete);
                     return;
                 }
             }
@@ -57,6 +74,8 @@ namespace WebCrawler.WebCrawler
                 }
                 catch (Exception ex)
                 {
+                    Interlocked.Decrement(ref _threadsRunning);
+                    Interlocked.Increment(ref _totalComplete);
                     return;
                 }
 
@@ -85,18 +104,38 @@ namespace WebCrawler.WebCrawler
                 {
                     long currUnique = Interlocked.Increment(ref _totalUniqueSites);
 
-                    if (currUnique % 1000 == 0)
+                    HttpRequestMessage headReq = new HttpRequestMessage();
+                    headReq.Method = HttpMethod.Head;
+                    headReq.RequestUri = uri;
+
+                    HttpResponseMessage checkReply = await httpClient.SendAsync(headReq, HttpCompletionOption.ResponseHeadersRead);
+
+                    if (!checkReply.IsSuccessStatusCode)
                     {
-                        TimeSpan currTime = _stopwatch.Elapsed;
-                        Console.WriteLine($"Worker: Downloaded from {currUnique} sites -- Time: {currTime} -- Time Since Last Worker Print: {(currTime - prevTime).ToString()}");
-                        prevTime = currTime;
+                        Interlocked.Increment(ref _unsuccessful);
+                        Interlocked.Decrement(ref _threadsRunning);
+                        Interlocked.Increment(ref _totalComplete);
+                        return;
                     }
 
-                    byte[] result = await client.DownloadDataTaskAsync(new Uri(url));
-                    Interlocked.Add(ref _totalBytesDownloaded, result.LongLength);
                     Interlocked.Increment(ref _totalResonsiveSites);
+
+                    if (checkReply.Content.Headers.ContentLength > _maxBytesFromPage)
+                    {
+                        Interlocked.Increment(ref _unsuccessful);
+                        Interlocked.Decrement(ref _threadsRunning);
+                        Interlocked.Increment(ref _totalComplete);
+                        return;
+                    }
+
+                    byte[] result = await httpClient.GetByteArrayAsync(url);
+                    Interlocked.Add(ref _totalBytesDownloaded, result.LongLength);
+
+                    Interlocked.Increment(ref _downloads);
                     //_totalUniqueSites++;
                     //_totalBytesDownloaded += result.LongLength;
+                    Interlocked.Decrement(ref _threadsRunning);
+                    Interlocked.Increment(ref _totalComplete);
                     return;
                 }
             }
@@ -107,13 +146,30 @@ namespace WebCrawler.WebCrawler
                     //_totalUnfoundHosts++;
                     Interlocked.Increment(ref _totalUnfoundHosts);
                 }
+                Interlocked.Decrement(ref _threadsRunning);
+                Interlocked.Increment(ref _totalComplete);
                 return;
             }
             catch (Exception ex)
             {
+                Interlocked.Decrement(ref _threadsRunning);
+                Interlocked.Increment(ref _totalComplete);
                 return;
             }
         }
+        private async Task StatsThread()
+        {
+            while (true)
+            {
+                if (_quitEvent.Wait(2000))
+                {
+                    return;
+                }
+                //await Task.Delay(2000);
+                Console.WriteLine($"Stats: Total Sites: {_totalSites} -- Running {_threadsRunning} -- Elapsed {_stopwatch.Elapsed.ToString()} -- Complete {_totalComplete} -- Downloads {_downloads} -- Responses {_totalResonsiveSites} -- Bytes {_totalBytesDownloaded}");
+            }
+        }
+
         public async Task<WebCrawlResult> CrawlAsync(int? maxSites = null)
         {
             List<Task> tasks = new List<Task>();
@@ -122,19 +178,14 @@ namespace WebCrawler.WebCrawler
 
             if (File.Exists(_filename))
             {
+                Task statsTread = Task.Run(() => StatsThread());
                 using (StreamReader sr = File.OpenText(_filename))
                 {
                     string line = String.Empty;
-                    TimeSpan prevTime = _stopwatch.Elapsed;
+                    //TimeSpan prevTime = _stopwatch.Elapsed;
                     while ((line = sr.ReadLine()) != null)
                     {
                         _totalSites++;
-                        if (_totalSites % 1000 == 0)
-                        {
-                            TimeSpan timeNow = _stopwatch.Elapsed;
-                            Console.WriteLine($"Reader: Read {_totalSites} lines -- Time: {timeNow.ToString()} -- Time Since Last Reader print: {(timeNow - prevTime).ToString()}");
-                            prevTime = timeNow;
-                        }
                         tasks.Add(CheckUrlAsync(line));
                         if (maxSites != null && _totalSites >= maxSites)
                         {
@@ -143,9 +194,11 @@ namespace WebCrawler.WebCrawler
                         }
                     }
 
-                    Console.WriteLine("Waiting for tasks to finish");
-                    await Task.WhenAll(tasks);
                 }
+                Console.WriteLine("Waiting for tasks to finish");
+                await Task.WhenAll(tasks);
+                _quitEvent.Set();
+                await statsTread;
             }
             else
             {

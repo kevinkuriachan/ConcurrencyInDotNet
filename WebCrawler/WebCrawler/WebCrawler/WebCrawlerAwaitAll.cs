@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
@@ -19,6 +20,7 @@ namespace WebCrawler.WebCrawler
             public bool Response { get; set; }
             public bool Unfound { get; set; }
             public long Bytes { get; set; }
+            public bool Download { get; set; }
         }
 
         private string _filename;
@@ -29,11 +31,15 @@ namespace WebCrawler.WebCrawler
 
         private long _totalUnfoundHosts = 0;
 
+        private long _totalDownloads = 0;
+
         private readonly object _mutexUrls = new object();
         private readonly object _mutexIps = new object();
 
         private HashSet<string> _uniqueUrls = new HashSet<string>();
         private HashSet<IPAddress> _uniqueIps = new HashSet<IPAddress>();
+
+        private long _maxBytesFromPage = 5000;
 
         public WebCrawlerAwaitAll(string filename)
         {
@@ -42,7 +48,7 @@ namespace WebCrawler.WebCrawler
 
         private async Task<SingleUrlResult> CheckUrlAsync(string url)
         {
-            WebClient client = new WebClient();
+            HttpClient httpClient = new HttpClient();
 
             lock(_mutexUrls)
             {
@@ -54,7 +60,8 @@ namespace WebCrawler.WebCrawler
                         Unique = false,
                         Response = false,
                         Unfound = false,
-                        Bytes = 0
+                        Bytes = 0,
+                        Download = false
                     };
                 }
             }
@@ -74,7 +81,8 @@ namespace WebCrawler.WebCrawler
                         Unique = false,
                         Response = false,
                         Unfound = false,
-                        Bytes = 0
+                        Bytes = 0,
+                        Download = false
                     };
                 }
 
@@ -101,16 +109,49 @@ namespace WebCrawler.WebCrawler
                 // a new unique ip was found 
                 if (newUniqueIps != prevUniqueIps)
                 {
-                    byte[] result = await client.DownloadDataTaskAsync(new Uri(url));
-                    //_totalUniqueSites++;
-                    //_totalBytesDownloaded += result.LongLength;
+                    HttpRequestMessage headReq = new HttpRequestMessage();
+                    headReq.Method = HttpMethod.Head;
+                    headReq.RequestUri = uri;
+
+                    HttpResponseMessage checkReply = await httpClient.SendAsync(headReq, HttpCompletionOption.ResponseHeadersRead);
+
+                    if (!checkReply.IsSuccessStatusCode)
+                    {
+                        return new SingleUrlResult
+                        {
+                            Valid = true,
+                            Unique = true,
+                            Response = false,
+                            Unfound = false,
+                            Bytes = 0,
+                            Download = false
+                        };
+                    }
+
+                    if (checkReply.Content.Headers.ContentLength > _maxBytesFromPage)
+                    {
+                        //Interlocked.Increment(ref _unsuccessful);
+                        return new SingleUrlResult
+                        {
+                            Valid = true,
+                            Unique = true,
+                            Response = false,
+                            Unfound = false,
+                            Bytes = 0,
+                            Download = false
+                        }; ;
+                    }
+
+                    byte[] result = await httpClient.GetByteArrayAsync(url);
+
                     return new SingleUrlResult
                     {
                         Valid = true,
                         Unique = true,
                         Response = true,
                         Unfound = false,
-                        Bytes = result.LongLength
+                        Bytes = result.LongLength,
+                        Download = true
                     };
                 }
 
@@ -120,7 +161,8 @@ namespace WebCrawler.WebCrawler
                     Unique = false,
                     Response = false,
                     Unfound = false,
-                    Bytes = 0
+                    Bytes = 0,
+                    Download = false
                 };
             }
             catch (SocketException ex)
@@ -134,7 +176,8 @@ namespace WebCrawler.WebCrawler
                         Unique = true,
                         Response = false,
                         Unfound = true,
-                        Bytes = 0
+                        Bytes = 0,
+                        Download = false
                     };
                 }
                 return new SingleUrlResult
@@ -143,7 +186,8 @@ namespace WebCrawler.WebCrawler
                     Unique = true,
                     Response = false,
                     Unfound = false,
-                    Bytes = 0
+                    Bytes = 0,
+                    Download = false
                 };
             }
             catch (Exception ex)
@@ -154,7 +198,8 @@ namespace WebCrawler.WebCrawler
                     Unique = false,
                     Response = false,
                     Unfound = false,
-                    Bytes = 0
+                    Bytes = 0,
+                    Download = false
                 };
             }
         }
@@ -196,6 +241,10 @@ namespace WebCrawler.WebCrawler
 
                     _totalUnfoundHosts = results.AsParallel()
                                             .Where(r => r.Unfound)
+                                            .Count();
+
+                    _totalDownloads = results.AsParallel()
+                                            .Where(r => r.Download)
                                             .Count();
 
                     _totalBytesDownloaded = results.AsParallel()
